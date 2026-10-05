@@ -3,13 +3,40 @@
     "name": "PlayerActions",
     "maps": [
         {
-            "name": "New action map",
+            "name": "PlayerActive",
             "id": "3f99b760-a387-4f32-9923-056a864800dd",
             "actions": [
+                {
+                    "name": "Strafe",
+                    "type": "Value",
+                    "id": "81cb847e-01df-451d-b741-52d9f8b70aa4",
+                    "expectedControlType": "",
+                    "processors": "",
+                    "interactions": "",
+                    "initialStateCheck": true
+                },
                 {
                     "name": "Jump",
                     "type": "Button",
                     "id": "73f5b8f1-2d60-45bd-b620-69e0ca473a93",
+                    "expectedControlType": "",
+                    "processors": "",
+                    "interactions": "",
+                    "initialStateCheck": false
+                },
+                {
+                    "name": "Crouch",
+                    "type": "Button",
+                    "id": "653a1bc2-84db-420e-9867-401b46784022",
+                    "expectedControlType": "",
+                    "processors": "",
+                    "interactions": "",
+                    "initialStateCheck": false
+                },
+                {
+                    "name": "Sprint",
+                    "type": "Button",
+                    "id": "da22c9f8-3048-47be-aa9e-2f2976100ea4",
                     "expectedControlType": "",
                     "processors": "",
                     "interactions": "",
@@ -50,15 +77,6 @@
                     "processors": "",
                     "interactions": "",
                     "initialStateCheck": false
-                },
-                {
-                    "name": "Strafe",
-                    "type": "Value",
-                    "id": "81cb847e-01df-451d-b741-52d9f8b70aa4",
-                    "expectedControlType": "",
-                    "processors": "",
-                    "interactions": "",
-                    "initialStateCheck": true
                 }
             ],
             "bindings": [
@@ -125,6 +143,28 @@
                     "processors": "",
                     "groups": "",
                     "action": "Strafe",
+                    "isComposite": false,
+                    "isPartOfComposite": false
+                },
+                {
+                    "name": "",
+                    "id": "0045646e-06e8-4729-94ea-490a07f11a69",
+                    "path": "<Keyboard>/ctrl",
+                    "interactions": "",
+                    "processors": "",
+                    "groups": "",
+                    "action": "Crouch",
+                    "isComposite": false,
+                    "isPartOfComposite": false
+                },
+                {
+                    "name": "",
+                    "id": "79692aef-fb99-469b-8788-422ad9c27510",
+                    "path": "<Keyboard>/leftShift",
+                    "interactions": "",
+                    "processors": "",
+                    "groups": "",
+                    "action": "Sprint",
                     "isComposite": false,
                     "isPartOfComposite": false
                 }
