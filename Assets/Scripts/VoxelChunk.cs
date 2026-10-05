@@ -5,9 +5,9 @@ using UnityEngine;
 public class VoxelChunk : MonoBehaviour
 {
     // Chunk dimensions
-    [SerializeField]private const int Width = 16;
-    [SerializeField]private const int Height = 16;
-    [SerializeField]private const int Depth = 16;
+    private const int Width = 16;
+    private const int Height = 16;
+    private const int Depth = 16;
 
     // 3D grid representing block IDs (0 = Air, 1 = Dirt, 2 = Stone, etc.)
     private int[,,] _blocks = new int[Width, Height, Depth];
