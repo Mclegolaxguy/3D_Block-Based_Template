@@ -1,9 +1,7 @@
-using System;
 using UnityEngine;
 
-public class Block : MonoBehaviour
+public class PlayerMovement : MonoBehaviour
 {
-    [SerializeField] private string type;
     // Start is called once before the first execution of Update after the MonoBehaviour is created
     void Start()
     {
