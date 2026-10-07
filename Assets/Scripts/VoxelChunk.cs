@@ -12,11 +12,11 @@ public class VoxelChunk : MonoBehaviour
     // 3D grid representing block IDs (0 = Air, 1 = Dirt, 2 = Stone, etc.)
     private int[,,] _blocks = new int[Width, Height, Depth];
 
-    private MeshFilter _meshFilter;
+    private MeshFilter meshFilter;
 
     void Start()
     {
-        _meshFilter = GetComponent<MeshFilter>();
+        meshFilter = GetComponent<MeshFilter>();
         GenerateMockChunkData();
         GenerateMesh();
     }
@@ -214,6 +214,6 @@ public class VoxelChunk : MonoBehaviour
         mesh.uv = uvs.ToArray();
 
         mesh.RecalculateNormals(); // Crucial for lighting to map cleanly across merged planes
-        _meshFilter.mesh = mesh;
+        meshFilter.mesh = mesh;
     }
 }
