@@ -11,7 +11,7 @@ GameObject:
   - component: {fileID: 9032724244436708518}
   - component: {fileID: 7635952250004646420}
   - component: {fileID: 6976753920007066437}
-  - component: {fileID: 7230054214245271828}
+  - component: {fileID: 1671107273521284304}
   m_Layer: 0
   m_Name: Block
   m_TagString: Untagged
@@ -69,7 +69,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Block
   type: 
---- !u!114 &7230054214245271828
+--- !u!114 &1671107273521284304
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -78,10 +78,15 @@ MonoBehaviour:
   m_GameObject: {fileID: 663926350622548640}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 45b07e5a32a8bd5479ba59f541e8509b, type: 3}
+  m_Script: {fileID: 11500000, guid: ed71931b786e5834aa23a1c5d9c39e27, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::Generator
-  randomWorldGenEnabled: 1
+  m_EditorClassIdentifier: Assembly-CSharp::Renderer
+  face1: {fileID: 5531153135340319076}
+  face2: {fileID: 4275739970557609038}
+  face3: {fileID: 6445366942264093327}
+  face4: {fileID: 4683733462594414558}
+  face5: {fileID: 3028517290251587572}
+  face6: {fileID: 4152002333434647824}
 --- !u!1 &3028517290251587572
 GameObject:
   m_ObjectHideFlags: 0
