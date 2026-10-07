@@ -7,21 +7,16 @@ using Unity.Mathematics;
 public struct ChunkBuilderJob : IJob
 {
     [ReadOnly] public int seed;
-    [ReadOnly] public int2 chunkGlobalPos;
+    [ReadOnly] public int2 chunkGlobalPos; // x = world X, y = world Z
     [ReadOnly] public int atlasSize;
 
-    // UV map lookup (passed from WorldManager)
     [ReadOnly] public NativeArray<int2> blockFaceUVs;
-
-    // Persistent voxel data for this specific chunk
     public NativeArray<byte> voxelMap;
 
-    // Mesh Data arrays allocated to max possible size
     public NativeArray<float3> vertices;
     public NativeArray<int> triangles;
     public NativeArray<float2> uvs;
 
-    // Counter to track how many vertices we actually created
     public NativeArray<int> counter;
 
     public void Execute()
@@ -33,15 +28,14 @@ public struct ChunkBuilderJob : IJob
         {
             for (int z = 0; z < 16; z++)
             {
-                int height = CalculateTerrainHeight(x + chunkGlobalPos.x, z + chunkGlobalPos.y);
+                int globalX = x + chunkGlobalPos.x;
+                int globalZ = z + chunkGlobalPos.y;
 
                 for (int y = 0; y < 64; y++)
                 {
-                    int index = GetFlatIndex(x, y, z);
-
-                    if (y > height) voxelMap[index] = 0;      // Air
-                    else if (y == height) voxelMap[index] = 2;// Grass
-                    else voxelMap[index] = 1;                 // Dirt
+                    // Generate the specific block based on world rules
+                    byte blockID = GenerateBlockAtGlobal(globalX, y, globalZ);
+                    voxelMap[GetFlatIndex(x, y, z)] = blockID;
                 }
             }
         }
@@ -56,7 +50,6 @@ public struct ChunkBuilderJob : IJob
                     byte blockID = voxelMap[GetFlatIndex(x, y, z)];
                     if (blockID == 0) continue;
 
-                    // Check all 6 directions (0=Back, 1=Front, 2=Top, 3=Bottom, 4=Left, 5=Right)
                     for (int face = 0; face < 6; face++)
                     {
                         if (!IsNeighborSolid(x, y, z, face))
@@ -69,11 +62,40 @@ public struct ChunkBuilderJob : IJob
         }
     }
 
-    private int CalculateTerrainHeight(int globalX, int globalZ)
+    // This method contains the "Minecraft" ruleset for terrain and caves
+    private byte GenerateBlockAtGlobal(int globalX, int globalY, int globalZ)
     {
-        // Unity.Mathematics noise function via noise.cnoise
-        float noiseVal = noise.cnoise(new float2(globalX * 0.05f + seed, globalZ * 0.05f + seed));
-        return (int)math.floor(noiseVal * 12f) + 10;
+        if (globalY <= 0) return 4; // Bedrock is always at the absolute bottom
+
+        // SURFACE GENERATION (2D Noise Octaves)
+        // Elevation provides large rolling hills, Roughness provides small local bumps
+        float elevation = noise.cnoise(new float2(globalX * 0.01f + seed, globalZ * 0.01f + seed));
+        float roughness = noise.cnoise(new float2(globalX * 0.04f + seed, globalZ * 0.04f + seed));
+
+        // cnoise returns -1 to 1. We normalize it to 0 to 1 for easier height calculation.
+        elevation = (elevation + 1f) / 2f;
+        roughness = (roughness + 1f) / 2f;
+
+        // Calculate surface height (Base height of 25 + up to 20 for hills + up to 5 for bumps)
+        int surfaceHeight = 25 + (int)(elevation * 20f) + (int)(roughness * 5f);
+
+        if (globalY > surfaceHeight) return 0; // Air above the surface
+
+        // CAVE GENERATION (3D Noise)
+        // We only generate caves deep underground to avoid floating grass/dirt
+        if (globalY > 1 && globalY < surfaceHeight - 3)
+        {
+            float caveNoise = noise.cnoise(new float3(globalX * 0.05f + seed, globalY * 0.05f + seed, globalZ * 0.05f + seed));
+
+            // If the 3D noise crosses a threshold, carve out air instead of stone
+            if (caveNoise > 0.35f) return 0;
+        }
+
+        // BIOME / DEPTH LAYERING
+        if (globalY == surfaceHeight) return 2; // Top layer is Grass
+        if (globalY >= surfaceHeight - 3) return 1; // 3 layers of Dirt below grass
+
+        return 3; // Everything else is Stone
     }
 
     private bool IsNeighborSolid(int localX, int localY, int localZ, int face)
@@ -83,11 +105,13 @@ public struct ChunkBuilderJob : IJob
         int ny = localY + offset.y;
         int nz = localZ + offset.z;
 
-        // If checking outside chunk bounds, use math instead of looking up data
+        // If a face borders an unloaded chunk, we use our mathematical rule to "predict" 
+        // what is there so chunks mesh perfectly without waiting for their neighbors.
         if (nx < 0 || nx > 15 || nz < 0 || nz > 15)
         {
-            int neighborHeight = CalculateTerrainHeight(nx + chunkGlobalPos.x, nz + chunkGlobalPos.y);
-            return ny <= neighborHeight;
+            int globalX = nx + chunkGlobalPos.x;
+            int globalZ = nz + chunkGlobalPos.y;
+            return GenerateBlockAtGlobal(globalX, ny, globalZ) != 0;
         }
 
         // Vertical bounds
@@ -101,7 +125,6 @@ public struct ChunkBuilderJob : IJob
     {
         int vIndex = counter[0];
 
-        // Get the 4 corners of this face
         int4 triData = GetTriangleIndices(face);
 
         vertices[vIndex] = GetCornerVertex(triData.x) + new float3(x, y, z);
@@ -109,7 +132,6 @@ public struct ChunkBuilderJob : IJob
         vertices[vIndex + 2] = GetCornerVertex(triData.z) + new float3(x, y, z);
         vertices[vIndex + 3] = GetCornerVertex(triData.w) + new float3(x, y, z);
 
-        // Calculate UVs based on block ID and Face
         int uvLookupIndex = (blockID * 6) + face;
         int2 texPos = blockFaceUVs[uvLookupIndex];
 
@@ -123,7 +145,6 @@ public struct ChunkBuilderJob : IJob
         uvs[vIndex + 2] = new float2(uvX + normalizedSize - pad, uvY + pad);
         uvs[vIndex + 3] = new float2(uvX + normalizedSize - pad, uvY + normalizedSize - pad);
 
-        // Triangles are drawn in two polygons
         triangles[vIndex * 3 / 2] = vIndex;
         triangles[(vIndex * 3 / 2) + 1] = vIndex + 1;
         triangles[(vIndex * 3 / 2) + 2] = vIndex + 2;
