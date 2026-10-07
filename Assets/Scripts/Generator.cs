@@ -23,6 +23,10 @@ public class Generator : MonoBehaviour
             seed = BigInteger.Parse(seedConstruction);
             Debug.Log(seed);
         }
+        else
+        {
+            //
+        }
     }
 
     // Update is called once per frame
