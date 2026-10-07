@@ -1,21 +1,19 @@
-using System.Collections.Generic;
+using Unity.Collections;
+using Unity.Jobs;
+using Unity.Mathematics;
 using UnityEngine;
 
 [RequireComponent(typeof(MeshFilter), typeof(MeshRenderer), typeof(MeshCollider))]
 public class Chunk : MonoBehaviour
 {
     private MeshFilter meshFilter;
-    private MeshRenderer meshRenderer;
     private MeshCollider meshCollider;
+    private Mesh chunkMesh;
 
-    private byte[,,] voxelMap;
-    private List<Vector3> vertices = new List<Vector3>();
-    private List<int> triangles = new List<int>();
-    private List<Vector2> uvs = new List<Vector2>();
-
-    private int vertexIndex = 0;
     public WorldManager world;
     public Vector3Int chunkPosition;
+
+    private NativeArray<byte> nativeVoxelMap;
 
     public void Initialize(WorldManager worldManager, Vector3Int position)
     {
@@ -24,152 +22,81 @@ public class Chunk : MonoBehaviour
         transform.position = chunkPosition;
 
         meshFilter = GetComponent<MeshFilter>();
-        meshRenderer = GetComponent<MeshRenderer>();
         meshCollider = GetComponent<MeshCollider>();
+        chunkMesh = new Mesh();
+        chunkMesh.MarkDynamic();
+        meshFilter.mesh = chunkMesh;
 
-        PopulateVoxelMap();
+        nativeVoxelMap = new NativeArray<byte>(16 * 64 * 16, Allocator.Persistent);
+
+        GenerateUsingJobs();
     }
 
-    private void PopulateVoxelMap()
+    public void GenerateUsingJobs()
     {
-        voxelMap = new byte[VoxelData.ChunkWidth, VoxelData.ChunkHeight, VoxelData.ChunkWidth];
+        int maxBlocks = 16384;
+        int maxVerts = maxBlocks * 24;
+        int maxTris = maxBlocks * 36;
 
-        for (int x = 0; x < VoxelData.ChunkWidth; x++)
+        NativeArray<float3> verts = new NativeArray<float3>(maxVerts, Allocator.TempJob);
+        NativeArray<int> tris = new NativeArray<int>(maxTris, Allocator.TempJob);
+        NativeArray<float2> uvs = new NativeArray<float2>(maxVerts, Allocator.TempJob);
+        NativeArray<int> counter = new NativeArray<int>(1, Allocator.TempJob);
+
+        ChunkBuilderJob buildJob = new ChunkBuilderJob
         {
-            for (int z = 0; z < VoxelData.ChunkWidth; z++)
-            {
-                // Use global position combined with world seed for smooth Perlin terrain across chunks
-                float globalX = (x + chunkPosition.x) * 0.05f + world.seed;
-                float globalZ = (z + chunkPosition.z) * 0.05f + world.seed;
+            seed = world.seed,
+            chunkGlobalPos = new int2(chunkPosition.x, chunkPosition.z),
+            atlasSize = world.textureAtlasSizeInBlocks,
+            blockFaceUVs = world.GetNativeUVMap(),
+            voxelMap = nativeVoxelMap,
+            vertices = verts,
+            triangles = tris,
+            uvs = uvs,
+            counter = counter
+        };
 
-                // Calculates terrain height based on seed
-                int terrainHeight = Mathf.FloorToInt(Mathf.PerlinNoise(globalX, globalZ) * 12f) + 10;
+        JobHandle handle = buildJob.Schedule();
+        handle.Complete();
 
-                for (int y = 0; y < VoxelData.ChunkHeight; y++)
-                {
-                    if (y > terrainHeight)
-                        voxelMap[x, y, z] = 0; // Air
-                    else if (y == terrainHeight)
-                        voxelMap[x, y, z] = 2; // Grass
-                    else
-                        voxelMap[x, y, z] = 1; // Dirt
-                }
-            }
-        }
-    }
+        int actualVertexCount = counter[0];
+        int actualTriangleCount = (actualVertexCount / 4) * 6;
 
-    public void UpdateChunkMesh()
-    {
-        vertices.Clear();
-        triangles.Clear();
-        uvs.Clear();
-        vertexIndex = 0;
+        chunkMesh.Clear();
 
-        for (int x = 0; x < VoxelData.ChunkWidth; x++)
+        if (actualVertexCount > 0)
         {
-            for (int y = 0; y < VoxelData.ChunkHeight; y++)
-            {
-                for (int z = 0; z < VoxelData.ChunkWidth; z++)
-                {
-                    byte blockID = voxelMap[x, y, z];
-                    if (blockID != 0)
-                    {
-                        AddVoxelDataToChunk(new Vector3Int(x, y, z), blockID);
-                    }
-                }
-            }
+            chunkMesh.SetVertices(verts, 0, actualVertexCount);
+            chunkMesh.SetIndices(tris, 0, actualTriangleCount, MeshTopology.Triangles, 0, false);
+            chunkMesh.SetUVs(0, uvs, 0, actualVertexCount);
+            chunkMesh.RecalculateNormals();
         }
 
-        CreateMesh();
-    }
+        meshCollider.sharedMesh = chunkMesh;
 
-    private void AddVoxelDataToChunk(Vector3Int pos, byte blockID)
-    {
-        for (int p = 0; p < 6; p++)
-        {
-            if (!CheckVoxel(pos + Vector3Int.RoundToInt(VoxelData.faceChecks[p])))
-            {
-                vertices.Add(pos + VoxelData.voxelVerts[VoxelData.voxelTris[p, 0]]);
-                vertices.Add(pos + VoxelData.voxelVerts[VoxelData.voxelTris[p, 1]]);
-                vertices.Add(pos + VoxelData.voxelVerts[VoxelData.voxelTris[p, 2]]);
-                vertices.Add(pos + VoxelData.voxelVerts[VoxelData.voxelTris[p, 3]]);
-
-                AddTextureUVs(blockID, p);
-
-                triangles.Add(vertexIndex);
-                triangles.Add(vertexIndex + 1);
-                triangles.Add(vertexIndex + 2);
-                triangles.Add(vertexIndex + 2);
-                triangles.Add(vertexIndex + 1);
-                triangles.Add(vertexIndex + 3);
-
-                vertexIndex += 4;
-            }
-        }
-    }
-
-    private void AddTextureUVs(byte blockID, int faceIndex)
-    {
-        Vector2Int texturePos = world.blockTypes[blockID].GetTextureID(faceIndex);
-        float normalizedBlockTextureSize = 1f / (float)world.textureAtlasSizeInBlocks;
-        float x = texturePos.x * normalizedBlockTextureSize;
-        float y = texturePos.y * normalizedBlockTextureSize;
-        float epsilon = 0.001f;
-
-        uvs.Add(new Vector2(x + epsilon, y + epsilon));
-        uvs.Add(new Vector2(x + epsilon, y + normalizedBlockTextureSize - epsilon));
-        uvs.Add(new Vector2(x + normalizedBlockTextureSize - epsilon, y + epsilon));
-        uvs.Add(new Vector2(x + normalizedBlockTextureSize - epsilon, y + normalizedBlockTextureSize - epsilon));
-    }
-
-    private bool CheckVoxel(Vector3Int pos)
-    {
-        if (pos.x < 0 || pos.x >= VoxelData.ChunkWidth ||
-            pos.y < 0 || pos.y >= VoxelData.ChunkHeight ||
-            pos.z < 0 || pos.z >= VoxelData.ChunkWidth)
-        {
-            Vector3 globalPos = chunkPosition + pos;
-            byte neighborID = world.GetBlockID(globalPos);
-
-            if (neighborID == 0) return false;
-            return world.blockTypes[neighborID].isSolid;
-        }
-
-        byte localID = voxelMap[pos.x, pos.y, pos.z];
-        if (localID == 0) return false;
-        return world.blockTypes[localID].isSolid;
-    }
-
-    public byte GetVoxelID(Vector3Int localPos)
-    {
-        if (localPos.x < 0 || localPos.x >= VoxelData.ChunkWidth ||
-            localPos.y < 0 || localPos.y >= VoxelData.ChunkHeight ||
-            localPos.z < 0 || localPos.z >= VoxelData.ChunkWidth)
-        {
-            return 0;
-        }
-        return voxelMap[localPos.x, localPos.y, localPos.z];
-    }
-
-    private void CreateMesh()
-    {
-        Mesh mesh = new Mesh();
-        mesh.vertices = vertices.ToArray();
-        mesh.triangles = triangles.ToArray();
-        mesh.uv = uvs.ToArray();
-        mesh.RecalculateNormals();
-
-        meshFilter.mesh = mesh;
-        meshCollider.sharedMesh = mesh;
+        verts.Dispose();
+        tris.Dispose();
+        uvs.Dispose();
+        counter.Dispose();
     }
 
     public void EditVoxel(Vector3Int localPos, byte newBlockID)
     {
-        if (localPos.x < 0 || localPos.x >= VoxelData.ChunkWidth ||
-            localPos.y < 0 || localPos.y >= VoxelData.ChunkHeight ||
-            localPos.z < 0 || localPos.z >= VoxelData.ChunkWidth) return;
+        if (localPos.x < 0 || localPos.x >= 16 ||
+            localPos.y < 0 || localPos.y >= 64 ||
+            localPos.z < 0 || localPos.z >= 16) return;
 
-        voxelMap[localPos.x, localPos.y, localPos.z] = newBlockID;
-        UpdateChunkMesh();
+        int index = localPos.x + (localPos.y * 16) + (localPos.z * 16 * 64);
+        nativeVoxelMap[index] = newBlockID;
+
+        GenerateUsingJobs();
+    }
+
+    private void OnDestroy()
+    {
+        if (nativeVoxelMap.IsCreated)
+        {
+            nativeVoxelMap.Dispose();
+        }
     }
 }

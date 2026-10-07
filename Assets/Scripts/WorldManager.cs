@@ -1,4 +1,6 @@
 using System.Collections.Generic;
+using Unity.Collections;
+using Unity.Mathematics;
 using UnityEngine;
 
 public class WorldManager : MonoBehaviour
@@ -6,8 +8,6 @@ public class WorldManager : MonoBehaviour
     public GameObject chunkPrefab;
     public Material voxelMaterial;
     public int worldSizeInChunks = 4;
-
-    [Header("Generation Seed")]
     public int seed = 1337;
 
     [Header("Texture Atlas Settings")]
@@ -17,44 +17,55 @@ public class WorldManager : MonoBehaviour
     public BlockType[] blockTypes;
 
     private Dictionary<Vector3Int, Chunk> chunks = new Dictionary<Vector3Int, Chunk>();
+    private NativeArray<int2> sharedUVMap;
 
     private void Start()
     {
-        // Only run on Start if world hasn't been generated in Editor beforehand
         if (chunks.Count == 0 && transform.childCount == 0)
         {
             GenerateWorld();
         }
     }
 
+    public NativeArray<int2> GetNativeUVMap()
+    {
+        return sharedUVMap;
+    }
+
     public void GenerateWorld()
     {
         ClearWorld();
 
-        // PASS 1: Generate Voxel Data
+        sharedUVMap = new NativeArray<int2>(blockTypes.Length * 6, Allocator.Persistent);
+
+        for (int i = 0; i < blockTypes.Length; i++)
+        {
+            sharedUVMap[(i * 6) + 0] = new int2(blockTypes[i].backFaceTexture.x, blockTypes[i].backFaceTexture.y);
+            sharedUVMap[(i * 6) + 1] = new int2(blockTypes[i].frontFaceTexture.x, blockTypes[i].frontFaceTexture.y);
+            sharedUVMap[(i * 6) + 2] = new int2(blockTypes[i].topFaceTexture.x, blockTypes[i].topFaceTexture.y);
+            sharedUVMap[(i * 6) + 3] = new int2(blockTypes[i].bottomFaceTexture.x, blockTypes[i].bottomFaceTexture.y);
+            sharedUVMap[(i * 6) + 4] = new int2(blockTypes[i].leftFaceTexture.x, blockTypes[i].leftFaceTexture.y);
+            sharedUVMap[(i * 6) + 5] = new int2(blockTypes[i].rightFaceTexture.x, blockTypes[i].rightFaceTexture.y);
+        }
+
         for (int x = 0; x < worldSizeInChunks; x++)
         {
             for (int z = 0; z < worldSizeInChunks; z++)
             {
-                Vector3Int chunkPos = new Vector3Int(x * VoxelData.ChunkWidth, 0, z * VoxelData.ChunkWidth);
+                Vector3Int chunkPos = new Vector3Int(x * 16, 0, z * 16);
                 GameObject newChunkObject = Instantiate(chunkPrefab, chunkPos, Quaternion.identity, transform);
 
                 newChunkObject.GetComponent<MeshRenderer>().material = voxelMaterial;
 
                 Chunk newChunk = newChunkObject.GetComponent<Chunk>();
-                newChunk.Initialize(this, chunkPos);
 
                 if (!chunks.ContainsKey(chunkPos))
                 {
                     chunks.Add(chunkPos, newChunk);
                 }
-            }
-        }
 
-        // PASS 2: Generate Meshes
-        foreach (KeyValuePair<Vector3Int, Chunk> chunk in chunks)
-        {
-            chunk.Value.UpdateChunkMesh();
+                newChunk.Initialize(this, chunkPos);
+            }
         }
     }
 
@@ -62,54 +73,32 @@ public class WorldManager : MonoBehaviour
     {
         chunks.Clear();
 
-        // Collect all existing child chunk GameObjects
-        List<GameObject> children = new List<GameObject>();
-        foreach (Transform child in transform)
+        if (sharedUVMap.IsCreated)
         {
-            children.Add(child.gameObject);
+            sharedUVMap.Dispose();
         }
 
-        // Destroy child chunks using appropriate API for Edit vs Play mode
+        List<GameObject> children = new List<GameObject>();
+        foreach (Transform child in transform) children.Add(child.gameObject);
+
         foreach (GameObject child in children)
         {
-            if (Application.isPlaying)
-            {
-                Destroy(child);
-            }
-            else
-            {
-                DestroyImmediate(child);
-            }
+            if (Application.isPlaying) Destroy(child);
+            else DestroyImmediate(child);
         }
     }
 
     public Chunk GetChunkFromVector3(Vector3 pos)
     {
-        int x = Mathf.FloorToInt(pos.x / VoxelData.ChunkWidth) * VoxelData.ChunkWidth;
-        int z = Mathf.FloorToInt(pos.z / VoxelData.ChunkWidth) * VoxelData.ChunkWidth;
+        int x = Mathf.FloorToInt(pos.x / 16f) * 16;
+        int z = Mathf.FloorToInt(pos.z / 16f) * 16;
 
         Vector3Int chunkPos = new Vector3Int(x, 0, z);
 
-        if (chunks.ContainsKey(chunkPos))
+        if (chunks.TryGetValue(chunkPos, out Chunk chunk))
         {
-            return chunks[chunkPos];
+            return chunk;
         }
         return null;
-    }
-
-    public byte GetBlockID(Vector3 globalPosition)
-    {
-        Chunk targetChunk = GetChunkFromVector3(globalPosition);
-        if (targetChunk != null)
-        {
-            Vector3Int localPos = new Vector3Int(
-                Mathf.FloorToInt(globalPosition.x) - targetChunk.chunkPosition.x,
-                Mathf.FloorToInt(globalPosition.y) - targetChunk.chunkPosition.y,
-                Mathf.FloorToInt(globalPosition.z) - targetChunk.chunkPosition.z
-            );
-
-            return targetChunk.GetVoxelID(localPos);
-        }
-        return 0;
     }
 }
