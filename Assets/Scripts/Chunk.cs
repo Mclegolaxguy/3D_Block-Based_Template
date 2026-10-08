@@ -6,97 +6,154 @@ using UnityEngine;
 [RequireComponent(typeof(MeshFilter), typeof(MeshRenderer), typeof(MeshCollider))]
 public class Chunk : MonoBehaviour
 {
-    private MeshFilter meshFilter;
-    private MeshCollider meshCollider;
-    private Mesh chunkMesh;
-
-    public WorldManager world;
     public Vector3Int chunkPosition;
+    private MeshFilter meshFilter;
+    private MeshRenderer meshRenderer;
+    private MeshCollider meshCollider;
+    private Mesh mesh;
+    private WorldManager worldManager;
 
-    private NativeArray<byte> nativeVoxelMap;
+    private NativeArray<byte> voxelMap;
+    private NativeArray<float3> vertices;
+    private NativeArray<int> triangles;
+    private NativeArray<float2> uvs;
+    private NativeArray<int> counter;
 
-    public void Initialize(WorldManager worldManager, Vector3Int position)
+    private JobHandle jobHandle;
+    private ChunkBuilderJob job;
+    private bool isJobScheduled;
+
+    public void Initialize(WorldManager worldManager, Vector3Int chunkPos)
     {
-        world = worldManager;
-        chunkPosition = position;
-        transform.position = chunkPosition;
-
+        this.worldManager = worldManager;
+        this.chunkPosition = chunkPos;
         meshFilter = GetComponent<MeshFilter>();
+        meshRenderer = GetComponent<MeshRenderer>();
         meshCollider = GetComponent<MeshCollider>();
-        chunkMesh = new Mesh();
-        chunkMesh.MarkDynamic();
-        meshFilter.mesh = chunkMesh;
 
-        nativeVoxelMap = new NativeArray<byte>(16 * 64 * 16, Allocator.Persistent);
-
-        GenerateUsingJobs();
-    }
-
-    public void GenerateUsingJobs()
-    {
-        int maxBlocks = 16384;
-        int maxVerts = maxBlocks * 24;
-        int maxTris = maxBlocks * 36;
-
-        NativeArray<float3> verts = new NativeArray<float3>(maxVerts, Allocator.TempJob);
-        NativeArray<int> tris = new NativeArray<int>(maxTris, Allocator.TempJob);
-        NativeArray<float2> uvs = new NativeArray<float2>(maxVerts, Allocator.TempJob);
-        NativeArray<int> counter = new NativeArray<int>(1, Allocator.TempJob);
-
-        ChunkBuilderJob buildJob = new ChunkBuilderJob
+        // Assign the Voxel Material from WorldManager
+        if (worldManager.voxelMaterial != null)
         {
-            seed = world.seed,
-            chunkGlobalPos = new int2(chunkPosition.x, chunkPosition.z),
-            atlasSize = world.textureAtlasSizeInBlocks,
-            blockFaceUVs = world.GetNativeUVMap(),
-            voxelMap = nativeVoxelMap,
-            vertices = verts,
-            triangles = tris,
-            uvs = uvs,
-            counter = counter
-        };
-
-        JobHandle handle = buildJob.Schedule();
-        handle.Complete();
-
-        int actualVertexCount = counter[0];
-        int actualTriangleCount = (actualVertexCount / 4) * 6;
-
-        chunkMesh.Clear();
-
-        if (actualVertexCount > 0)
-        {
-            chunkMesh.SetVertices(verts, 0, actualVertexCount);
-            chunkMesh.SetIndices(tris, 0, actualTriangleCount, MeshTopology.Triangles, 0, false);
-            chunkMesh.SetUVs(0, uvs, 0, actualVertexCount);
-            chunkMesh.RecalculateNormals();
+            meshRenderer.sharedMaterial = worldManager.voxelMaterial;
         }
 
-        meshCollider.sharedMesh = chunkMesh;
+        mesh = new Mesh { name = $"Chunk_{chunkPos.x}_{chunkPos.z}" };
+        meshFilter.mesh = mesh;
 
-        verts.Dispose();
-        tris.Dispose();
-        uvs.Dispose();
-        counter.Dispose();
+        voxelMap = new NativeArray<byte>(16 * 64 * 16, Allocator.Persistent);
+        vertices = new NativeArray<float3>(196608, Allocator.Persistent);
+        triangles = new NativeArray<int>(294912, Allocator.Persistent);
+        uvs = new NativeArray<float2>(196608, Allocator.Persistent);
+        counter = new NativeArray<int>(1, Allocator.Persistent);
+
+        ScheduleMeshBuild(true);
     }
 
     public void EditVoxel(Vector3Int localPos, byte newBlockID)
     {
-        if (localPos.x < 0 || localPos.x >= 16 ||
-            localPos.y < 0 || localPos.y >= 64 ||
-            localPos.z < 0 || localPos.z >= 16) return;
+        EditVoxel(localPos.x, localPos.y, localPos.z, newBlockID);
+    }
 
-        int index = localPos.x + (localPos.y * 16) + (localPos.z * 16 * 64);
-        nativeVoxelMap[index] = newBlockID;
+    public void EditVoxel(int x, int y, int z, byte newBlockID)
+    {
+        if (x < 0 || x >= 16 || y < 0 || y >= 64 || z < 0 || z >= 16) return;
 
-        GenerateUsingJobs();
+        if (isJobScheduled)
+        {
+            jobHandle.Complete();
+            isJobScheduled = false;
+        }
+
+        int flatIndex = x + (y * 16) + (z * 16 * 64);
+        if (voxelMap.IsCreated)
+        {
+            voxelMap[flatIndex] = newBlockID;
+            ScheduleMeshBuild(false);
+        }
+    }
+
+    private void ScheduleMeshBuild(bool generateVoxels)
+    {
+        if (isJobScheduled)
+        {
+            jobHandle.Complete();
+            isJobScheduled = false;
+        }
+
+        job = new ChunkBuilderJob
+        {
+            seed = worldManager.seed,
+            chunkGlobalPos = new int2(chunkPosition.x, chunkPosition.z),
+            atlasSize = worldManager.textureAtlasSizeInBlocks,
+            generateVoxels = generateVoxels,
+            blockIDs = worldManager.GetGenerationBlockIDs(),
+            blockFaceUVs = worldManager.GetNativeUVMap(),
+            voxelMap = voxelMap,
+            vertices = vertices,
+            triangles = triangles,
+            uvs = uvs,
+            counter = counter
+        };
+
+        jobHandle = job.Schedule();
+        isJobScheduled = true;
+    }
+
+    public void CompleteJobImmediately()
+    {
+        if (isJobScheduled)
+        {
+            jobHandle.Complete();
+            isJobScheduled = false;
+            BuildMesh();
+        }
+    }
+
+    private void Update()
+    {
+        if (isJobScheduled && jobHandle.IsCompleted)
+        {
+            jobHandle.Complete();
+            isJobScheduled = false;
+            BuildMesh();
+        }
+    }
+
+    private void BuildMesh()
+    {
+        int vertexCount = counter[0];
+        int triangleCount = (vertexCount * 6) / 4;
+
+        mesh.Clear();
+        if (vertexCount > 0)
+        {
+            mesh.SetVertices(vertices.Reinterpret<Vector3>(), 0, vertexCount);
+            mesh.SetUVs(0, uvs.Reinterpret<Vector2>(), 0, vertexCount);
+            mesh.SetTriangles(triangles.Slice(0, triangleCount).ToArray(), 0);
+
+            mesh.RecalculateNormals();
+            mesh.RecalculateBounds();
+            meshCollider.sharedMesh = mesh;
+        }
+    }
+
+    public void Cleanup()
+    {
+        if (isJobScheduled)
+        {
+            jobHandle.Complete();
+            isJobScheduled = false;
+        }
+
+        if (voxelMap.IsCreated) voxelMap.Dispose();
+        if (vertices.IsCreated) vertices.Dispose();
+        if (triangles.IsCreated) triangles.Dispose();
+        if (uvs.IsCreated) uvs.Dispose();
+        if (counter.IsCreated) counter.Dispose();
     }
 
     private void OnDestroy()
     {
-        if (nativeVoxelMap.IsCreated)
-        {
-            nativeVoxelMap.Dispose();
-        }
+        Cleanup();
     }
 }

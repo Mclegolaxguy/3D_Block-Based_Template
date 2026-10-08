@@ -7,16 +7,16 @@ using Unity.Mathematics;
 public struct ChunkBuilderJob : IJob
 {
     [ReadOnly] public int seed;
-    [ReadOnly] public int2 chunkGlobalPos; // x = world X, y = world Z
+    [ReadOnly] public int2 chunkGlobalPos;
     [ReadOnly] public int atlasSize;
-
+    [ReadOnly] public bool generateVoxels;
+    [ReadOnly] public GenerationBlockIDs blockIDs;
     [ReadOnly] public NativeArray<int2> blockFaceUVs;
-    public NativeArray<byte> voxelMap;
 
+    public NativeArray<byte> voxelMap;
     public NativeArray<float3> vertices;
     public NativeArray<int> triangles;
     public NativeArray<float2> uvs;
-
     public NativeArray<int> counter;
 
     public void Execute()
@@ -24,18 +24,20 @@ public struct ChunkBuilderJob : IJob
         counter[0] = 0;
 
         // 1. GENERATE VOXEL DATA
-        for (int x = 0; x < 16; x++)
+        if (generateVoxels)
         {
-            for (int z = 0; z < 16; z++)
+            for (int x = 0; x < 16; x++)
             {
-                int globalX = x + chunkGlobalPos.x;
-                int globalZ = z + chunkGlobalPos.y;
-
-                for (int y = 0; y < 64; y++)
+                for (int z = 0; z < 16; z++)
                 {
-                    // Generate the specific block based on world rules
-                    byte blockID = GenerateBlockAtGlobal(globalX, y, globalZ);
-                    voxelMap[GetFlatIndex(x, y, z)] = blockID;
+                    int globalX = x + chunkGlobalPos.x;
+                    int globalZ = z + chunkGlobalPos.y;
+
+                    for (int y = 0; y < 64; y++)
+                    {
+                        byte blockID = GenerateBlockAtGlobal(globalX, y, globalZ);
+                        voxelMap[GetFlatIndex(x, y, z)] = blockID;
+                    }
                 }
             }
         }
@@ -48,7 +50,7 @@ public struct ChunkBuilderJob : IJob
                 for (int z = 0; z < 16; z++)
                 {
                     byte blockID = voxelMap[GetFlatIndex(x, y, z)];
-                    if (blockID == 0) continue;
+                    if (blockID == blockIDs.air) continue;
 
                     for (int face = 0; face < 6; face++)
                     {
@@ -62,40 +64,47 @@ public struct ChunkBuilderJob : IJob
         }
     }
 
-    // This method contains the "Minecraft" ruleset for terrain and caves
     private byte GenerateBlockAtGlobal(int globalX, int globalY, int globalZ)
     {
-        if (globalY <= 0) return 4; // Bedrock is always at the absolute bottom
+        if (globalY <= 0) return blockIDs.bedrock;
 
-        // SURFACE GENERATION (2D Noise Octaves)
-        // Elevation provides large rolling hills, Roughness provides small local bumps
-        float elevation = noise.cnoise(new float2(globalX * 0.01f + seed, globalZ * 0.01f + seed));
-        float roughness = noise.cnoise(new float2(globalX * 0.04f + seed, globalZ * 0.04f + seed));
+        float mMask = noise.cnoise(new float2(globalX * 0.006f + seed + 500, globalZ * 0.006f + seed + 500));
+        mMask = math.max(0f, mMask);
+        mMask = math.pow(mMask, 1.5f);
 
-        // cnoise returns -1 to 1. We normalize it to 0 to 1 for easier height calculation.
-        elevation = (elevation + 1f) / 2f;
-        roughness = (roughness + 1f) / 2f;
+        float hills = (noise.cnoise(new float2(globalX * 0.015f + seed, globalZ * 0.015f + seed)) + 1f) * 0.5f;
+        float mountainDetail = (noise.cnoise(new float2(globalX * 0.03f + seed + 200, globalZ * 0.03f + seed + 200)) + 1) * 0.5f;
 
-        // Calculate surface height (Base height of 25 + up to 20 for hills + up to 5 for bumps)
-        int surfaceHeight = 25 + (int)(elevation * 20f) + (int)(roughness * 5f);
+        int surfaceHeight = 20 + (int)(hills * 8f) + (int)(mountainDetail * 28f * mMask);
+        surfaceHeight = math.clamp(surfaceHeight, 5, 60);
 
-        if (globalY > surfaceHeight) return 0; // Air above the surface
+        if (globalY > surfaceHeight) return blockIDs.air;
 
-        // CAVE GENERATION (3D Noise)
-        // We only generate caves deep underground to avoid floating grass/dirt
-        if (globalY > 1 && globalY < surfaceHeight - 3)
+        if (globalY > 1 && globalY <= surfaceHeight)
         {
-            float caveNoise = noise.cnoise(new float3(globalX * 0.05f + seed, globalY * 0.05f + seed, globalZ * 0.05f + seed));
+            float cave1 = noise.cnoise(new float3(globalX * 0.03f + seed, globalY * 0.03f + seed, globalZ * 0.03f + seed));
+            float cave2 = noise.cnoise(new float3(globalX * 0.06f + seed + 100, globalY * 0.06f + seed + 100, globalZ * 0.06f + seed + 100));
 
-            // If the 3D noise crosses a threshold, carve out air instead of stone
-            if (caveNoise > 0.35f) return 0;
+            float caveDensity = math.abs(cave1) + math.abs(cave2) * 0.5f;
+            float heightRatio = (float)globalY / surfaceHeight;
+            float caveThreshold = math.lerp(0.18f, 0.12f, heightRatio);
+
+            if (caveDensity < caveThreshold)
+            {
+                return blockIDs.air;
+            }
         }
 
-        // BIOME / DEPTH LAYERING
-        if (globalY == surfaceHeight) return 2; // Top layer is Grass
-        if (globalY >= surfaceHeight - 3) return 1; // 3 layers of Dirt below grass
-
-        return 3; // Everything else is Stone
+        bool isMountainPeak = surfaceHeight > 36;
+        if (globalY == surfaceHeight)
+        {
+            return isMountainPeak ? blockIDs.stone : blockIDs.grass;
+        }
+        if (globalY >= surfaceHeight - 3)
+        {
+            return isMountainPeak ? blockIDs.stone : blockIDs.dirt;
+        }
+        return blockIDs.stone;
     }
 
     private bool IsNeighborSolid(int localX, int localY, int localZ, int face)
@@ -105,26 +114,21 @@ public struct ChunkBuilderJob : IJob
         int ny = localY + offset.y;
         int nz = localZ + offset.z;
 
-        // If a face borders an unloaded chunk, we use our mathematical rule to "predict" 
-        // what is there so chunks mesh perfectly without waiting for their neighbors.
         if (nx < 0 || nx > 15 || nz < 0 || nz > 15)
         {
             int globalX = nx + chunkGlobalPos.x;
             int globalZ = nz + chunkGlobalPos.y;
-            return GenerateBlockAtGlobal(globalX, ny, globalZ) != 0;
+            return GenerateBlockAtGlobal(globalX, ny, globalZ) != blockIDs.air;
         }
 
-        // Vertical bounds
         if (ny < 0 || ny > 63) return false;
 
-        // Inside bounds, read from our native array
-        return voxelMap[GetFlatIndex(nx, ny, nz)] != 0;
+        return voxelMap[GetFlatIndex(nx, ny, nz)] != blockIDs.air;
     }
 
     private void DrawFace(int x, int y, int z, byte blockID, int face)
     {
         int vIndex = counter[0];
-
         int4 triData = GetTriangleIndices(face);
 
         vertices[vIndex] = GetCornerVertex(triData.x) + new float3(x, y, z);
@@ -134,10 +138,10 @@ public struct ChunkBuilderJob : IJob
 
         int uvLookupIndex = (blockID * 6) + face;
         int2 texPos = blockFaceUVs[uvLookupIndex];
-
         float normalizedSize = 1f / atlasSize;
         float uvX = texPos.x * normalizedSize;
         float uvY = texPos.y * normalizedSize;
+
         float pad = 0.001f;
 
         uvs[vIndex] = new float2(uvX + pad, uvY + pad);
@@ -145,7 +149,7 @@ public struct ChunkBuilderJob : IJob
         uvs[vIndex + 2] = new float2(uvX + normalizedSize - pad, uvY + pad);
         uvs[vIndex + 3] = new float2(uvX + normalizedSize - pad, uvY + normalizedSize - pad);
 
-        triangles[vIndex * 3 / 2] = vIndex;
+        triangles[(vIndex * 3 / 2)] = vIndex;
         triangles[(vIndex * 3 / 2) + 1] = vIndex + 1;
         triangles[(vIndex * 3 / 2) + 2] = vIndex + 2;
         triangles[(vIndex * 3 / 2) + 3] = vIndex + 2;
@@ -159,8 +163,8 @@ public struct ChunkBuilderJob : IJob
 
     private int3 GetFaceNormal(int face)
     {
-        if (face == 0) return new int3(0, 0, -1);
-        if (face == 1) return new int3(0, 0, 1);
+        if (face == 0) return new int3(0, 0, 1);
+        if (face == 1) return new int3(0, 0, -1);
         if (face == 2) return new int3(0, 1, 0);
         if (face == 3) return new int3(0, -1, 0);
         if (face == 4) return new int3(-1, 0, 0);
@@ -181,11 +185,12 @@ public struct ChunkBuilderJob : IJob
 
     private int4 GetTriangleIndices(int face)
     {
-        if (face == 0) return new int4(0, 3, 1, 2);
-        if (face == 1) return new int4(5, 6, 4, 7);
-        if (face == 2) return new int4(3, 7, 2, 6);
-        if (face == 3) return new int4(1, 5, 0, 4);
-        if (face == 4) return new int4(4, 7, 0, 3);
-        return new int4(1, 2, 5, 6);
+        // FIXED: Reversed winding order so Front and Back normals point outward.
+        if (face == 0) return new int4(5, 6, 4, 7); // Front (+Z)
+        if (face == 1) return new int4(0, 3, 1, 2); // Back (-Z)
+        if (face == 2) return new int4(3, 7, 2, 6); // Top (+Y)
+        if (face == 3) return new int4(4, 0, 5, 1); // Bottom (-Y)
+        if (face == 4) return new int4(4, 7, 0, 3); // Left (-X)
+        return new int4(1, 2, 5, 6);               // Right (+X)
     }
 }
