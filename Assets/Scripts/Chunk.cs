@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Unity.Collections;
 using Unity.Jobs;
 using Unity.Mathematics;
@@ -18,6 +19,7 @@ public class Chunk : MonoBehaviour
     private NativeArray<int> triangles;
     private NativeArray<float2> uvs;
     private NativeArray<int> counter;
+    private NativeArray<int> triangleSubmeshIndices;
 
     private JobHandle jobHandle;
     private ChunkBuilderJob job;
@@ -31,11 +33,8 @@ public class Chunk : MonoBehaviour
         meshRenderer = GetComponent<MeshRenderer>();
         meshCollider = GetComponent<MeshCollider>();
 
-        // Assign the Voxel Material from WorldManager
-        if (worldManager.voxelMaterial != null)
-        {
-            meshRenderer.sharedMaterial = worldManager.voxelMaterial;
-        }
+        List<Material> uniqueMaterials = worldManager.GetUniqueMaterials(out NativeArray<int> materialIndices);
+        meshRenderer.sharedMaterials = uniqueMaterials.ToArray();
 
         mesh = new Mesh { name = $"Chunk_{chunkPos.x}_{chunkPos.z}" };
         meshFilter.mesh = mesh;
@@ -45,6 +44,7 @@ public class Chunk : MonoBehaviour
         triangles = new NativeArray<int>(294912, Allocator.Persistent);
         uvs = new NativeArray<float2>(196608, Allocator.Persistent);
         counter = new NativeArray<int>(1, Allocator.Persistent);
+        triangleSubmeshIndices = new NativeArray<int>(49152, Allocator.Persistent);
 
         ScheduleMeshBuild(true);
     }
@@ -80,19 +80,22 @@ public class Chunk : MonoBehaviour
             isJobScheduled = false;
         }
 
+        worldManager.GetUniqueMaterials(out NativeArray<int> materialIndices);
+
         job = new ChunkBuilderJob
         {
             seed = worldManager.seed,
             chunkGlobalPos = new int2(chunkPosition.x, chunkPosition.z),
-            atlasSize = worldManager.textureAtlasSizeInBlocks,
             generateVoxels = generateVoxels,
             blockIDs = worldManager.GetGenerationBlockIDs(),
             blockFaceUVs = worldManager.GetNativeUVMap(),
+            blockMaterialIndices = materialIndices,
             voxelMap = voxelMap,
             vertices = vertices,
             triangles = triangles,
             uvs = uvs,
-            counter = counter
+            counter = counter,
+            triangleSubmeshIndices = triangleSubmeshIndices
         };
 
         jobHandle = job.Schedule();
@@ -122,14 +125,40 @@ public class Chunk : MonoBehaviour
     private void BuildMesh()
     {
         int vertexCount = counter[0];
-        int triangleCount = (vertexCount * 6) / 4;
+        int totalFaces = vertexCount / 4;
 
         mesh.Clear();
         if (vertexCount > 0)
         {
+            List<Material> uniqueMaterials = worldManager.GetUniqueMaterials(out _);
+            int submeshCount = uniqueMaterials.Count;
+
+            List<int>[] submeshTriangles = new List<int>[submeshCount];
+            for (int i = 0; i < submeshCount; i++)
+            {
+                submeshTriangles[i] = new List<int>();
+            }
+
+            for (int f = 0; f < totalFaces; f++)
+            {
+                int submeshIdx = triangleSubmeshIndices[f];
+                if (submeshIdx < 0 || submeshIdx >= submeshCount) submeshIdx = 0;
+
+                int triStartIndex = f * 6;
+                for (int i = 0; i < 6; i++)
+                {
+                    submeshTriangles[submeshIdx].Add(triangles[triStartIndex + i]);
+                }
+            }
+
             mesh.SetVertices(vertices.Reinterpret<Vector3>(), 0, vertexCount);
             mesh.SetUVs(0, uvs.Reinterpret<Vector2>(), 0, vertexCount);
-            mesh.SetTriangles(triangles.Slice(0, triangleCount).ToArray(), 0);
+
+            mesh.subMeshCount = submeshCount;
+            for (int i = 0; i < submeshCount; i++)
+            {
+                mesh.SetTriangles(submeshTriangles[i], i);
+            }
 
             mesh.RecalculateNormals();
             mesh.RecalculateBounds();
@@ -150,6 +179,7 @@ public class Chunk : MonoBehaviour
         if (triangles.IsCreated) triangles.Dispose();
         if (uvs.IsCreated) uvs.Dispose();
         if (counter.IsCreated) counter.Dispose();
+        if (triangleSubmeshIndices.IsCreated) triangleSubmeshIndices.Dispose();
     }
 
     private void OnDestroy()

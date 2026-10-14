@@ -8,16 +8,17 @@ public struct ChunkBuilderJob : IJob
 {
     [ReadOnly] public int seed;
     [ReadOnly] public int2 chunkGlobalPos;
-    [ReadOnly] public int atlasSize;
     [ReadOnly] public bool generateVoxels;
     [ReadOnly] public GenerationBlockIDs blockIDs;
-    [ReadOnly] public NativeArray<int2> blockFaceUVs;
+    [ReadOnly] public NativeArray<float4> blockFaceUVs;
+    [ReadOnly] public NativeArray<int> blockMaterialIndices;
 
     public NativeArray<byte> voxelMap;
     public NativeArray<float3> vertices;
     public NativeArray<int> triangles;
     public NativeArray<float2> uvs;
     public NativeArray<int> counter;
+    public NativeArray<int> triangleSubmeshIndices;
 
     public void Execute()
     {
@@ -129,6 +130,7 @@ public struct ChunkBuilderJob : IJob
     private void DrawFace(int x, int y, int z, byte blockID, int face)
     {
         int vIndex = counter[0];
+        int faceIndex = vIndex / 4;
         int4 triData = GetTriangleIndices(face);
 
         vertices[vIndex] = GetCornerVertex(triData.x) + new float3(x, y, z);
@@ -137,24 +139,27 @@ public struct ChunkBuilderJob : IJob
         vertices[vIndex + 3] = GetCornerVertex(triData.w) + new float3(x, y, z);
 
         int uvLookupIndex = (blockID * 6) + face;
-        int2 texPos = blockFaceUVs[uvLookupIndex];
-        float normalizedSize = 1f / atlasSize;
-        float uvX = texPos.x * normalizedSize;
-        float uvY = texPos.y * normalizedSize;
+        float4 uvRect = blockFaceUVs[uvLookupIndex];
 
-        float pad = 0.001f;
+        uvs[vIndex] = new float2(uvRect.x, uvRect.y);
+        uvs[vIndex + 1] = new float2(uvRect.x, uvRect.w);
+        uvs[vIndex + 2] = new float2(uvRect.z, uvRect.y);
+        uvs[vIndex + 3] = new float2(uvRect.z, uvRect.w);
 
-        uvs[vIndex] = new float2(uvX + pad, uvY + pad);
-        uvs[vIndex + 1] = new float2(uvX + pad, uvY + normalizedSize - pad);
-        uvs[vIndex + 2] = new float2(uvX + normalizedSize - pad, uvY + pad);
-        uvs[vIndex + 3] = new float2(uvX + normalizedSize - pad, uvY + normalizedSize - pad);
+        int triStartIndex = (vIndex * 3 / 2);
+        triangles[triStartIndex + 0] = vIndex;
+        triangles[triStartIndex + 1] = vIndex + 1;
+        triangles[triStartIndex + 2] = vIndex + 2;
+        triangles[triStartIndex + 3] = vIndex + 2;
+        triangles[triStartIndex + 4] = vIndex + 1;
+        triangles[triStartIndex + 5] = vIndex + 3;
 
-        triangles[(vIndex * 3 / 2)] = vIndex;
-        triangles[(vIndex * 3 / 2) + 1] = vIndex + 1;
-        triangles[(vIndex * 3 / 2) + 2] = vIndex + 2;
-        triangles[(vIndex * 3 / 2) + 3] = vIndex + 2;
-        triangles[(vIndex * 3 / 2) + 4] = vIndex + 1;
-        triangles[(vIndex * 3 / 2) + 5] = vIndex + 3;
+        int submeshIdx = 0;
+        if (blockID < blockMaterialIndices.Length)
+        {
+            submeshIdx = blockMaterialIndices[blockID];
+        }
+        triangleSubmeshIndices[faceIndex] = submeshIdx;
 
         counter[0] += 4;
     }
@@ -185,7 +190,6 @@ public struct ChunkBuilderJob : IJob
 
     private int4 GetTriangleIndices(int face)
     {
-        // FIXED: Reversed winding order so Front and Back normals point outward.
         if (face == 0) return new int4(5, 6, 4, 7); // Front (+Z)
         if (face == 1) return new int4(0, 3, 1, 2); // Back (-Z)
         if (face == 2) return new int4(3, 7, 2, 6); // Top (+Y)
