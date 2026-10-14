@@ -18,6 +18,7 @@ public class Chunk : MonoBehaviour
     private NativeArray<float3> vertices;
     private NativeArray<int> triangles;
     private NativeArray<float2> uvs;
+    private NativeArray<float4> colors;
     private NativeArray<int> counter;
     private NativeArray<int> triangleSubmeshIndices;
 
@@ -43,6 +44,7 @@ public class Chunk : MonoBehaviour
         vertices = new NativeArray<float3>(196608, Allocator.Persistent);
         triangles = new NativeArray<int>(294912, Allocator.Persistent);
         uvs = new NativeArray<float2>(196608, Allocator.Persistent);
+        colors = new NativeArray<float4>(196608, Allocator.Persistent);
         counter = new NativeArray<int>(1, Allocator.Persistent);
         triangleSubmeshIndices = new NativeArray<int>(49152, Allocator.Persistent);
 
@@ -89,11 +91,13 @@ public class Chunk : MonoBehaviour
             generateVoxels = generateVoxels,
             blockIDs = worldManager.GetGenerationBlockIDs(),
             blockFaceUVs = worldManager.GetNativeUVMap(),
+            blockFaceColors = worldManager.GetNativeColorMap(),
             blockMaterialIndices = materialIndices,
             voxelMap = voxelMap,
             vertices = vertices,
             triangles = triangles,
             uvs = uvs,
+            colors = colors,
             counter = counter,
             triangleSubmeshIndices = triangleSubmeshIndices
         };
@@ -153,6 +157,7 @@ public class Chunk : MonoBehaviour
 
             mesh.SetVertices(vertices.Reinterpret<Vector3>(), 0, vertexCount);
             mesh.SetUVs(0, uvs.Reinterpret<Vector2>(), 0, vertexCount);
+            mesh.SetColors(colors.Reinterpret<Color>(), 0, vertexCount);
 
             mesh.subMeshCount = submeshCount;
             for (int i = 0; i < submeshCount; i++)
@@ -178,6 +183,7 @@ public class Chunk : MonoBehaviour
         if (vertices.IsCreated) vertices.Dispose();
         if (triangles.IsCreated) triangles.Dispose();
         if (uvs.IsCreated) uvs.Dispose();
+        if (colors.IsCreated) colors.Dispose();
         if (counter.IsCreated) counter.Dispose();
         if (triangleSubmeshIndices.IsCreated) triangleSubmeshIndices.Dispose();
     }

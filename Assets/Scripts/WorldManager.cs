@@ -33,6 +33,15 @@ public class WorldManager : MonoBehaviour
         public int2 backTexture;
         public int2 leftTexture;
         public int2 rightTexture;
+
+        [Header("Face Colors (RGB Tint)")]
+        public Color singleColor = Color.white;
+        public Color topColor = Color.white;
+        public Color bottomColor = Color.white;
+        public Color frontColor = Color.white;
+        public Color backColor = Color.white;
+        public Color leftColor = Color.white;
+        public Color rightColor = Color.white;
     }
 
     public GameObject chunkPrefab;
@@ -43,6 +52,7 @@ public class WorldManager : MonoBehaviour
     public List<BlockType> blockTypes = new List<BlockType>();
 
     private NativeArray<float4> cachedUVMap;
+    private NativeArray<float4> cachedColorMap;
     private NativeArray<int> cachedMaterialIndices;
     private List<Material> cachedUniqueMaterials;
     private Dictionary<Vector2Int, Chunk> chunks = new Dictionary<Vector2Int, Chunk>();
@@ -194,6 +204,36 @@ public class WorldManager : MonoBehaviour
         return cachedUVMap;
     }
 
+    public NativeArray<float4> GetNativeColorMap()
+    {
+        if (cachedColorMap.IsCreated) return cachedColorMap;
+
+        int count = math.max(1, blockTypes.Count);
+        cachedColorMap = new NativeArray<float4>(count * 6, Allocator.Persistent);
+
+        for (int i = 0; i < blockTypes.Count; i++)
+        {
+            BlockType block = blockTypes[i];
+            int baseIndex = i * 6;
+
+            Color f = block.seperateFaces ? block.frontColor : block.singleColor;
+            Color b = block.seperateFaces ? block.backColor : block.singleColor;
+            Color t = block.seperateFaces ? block.topColor : block.singleColor;
+            Color bt = block.seperateFaces ? block.bottomColor : block.singleColor;
+            Color l = block.seperateFaces ? block.leftColor : block.singleColor;
+            Color r = block.seperateFaces ? block.rightColor : block.singleColor;
+
+            cachedColorMap[baseIndex + 0] = new float4(f.r, f.g, f.b, f.a);
+            cachedColorMap[baseIndex + 1] = new float4(b.r, b.g, b.b, b.a);
+            cachedColorMap[baseIndex + 2] = new float4(t.r, t.g, t.b, t.a);
+            cachedColorMap[baseIndex + 3] = new float4(bt.r, bt.g, bt.b, bt.a);
+            cachedColorMap[baseIndex + 4] = new float4(l.r, l.g, l.b, l.a);
+            cachedColorMap[baseIndex + 5] = new float4(r.r, r.g, r.b, r.a);
+        }
+
+        return cachedColorMap;
+    }
+
     public List<Material> GetUniqueMaterials(out NativeArray<int> materialIndicesOut)
     {
         if (cachedUniqueMaterials == null || !cachedMaterialIndices.IsCreated)
@@ -240,6 +280,7 @@ public class WorldManager : MonoBehaviour
     private void DisposeNativeData()
     {
         if (cachedUVMap.IsCreated) cachedUVMap.Dispose();
+        if (cachedColorMap.IsCreated) cachedColorMap.Dispose();
         if (cachedMaterialIndices.IsCreated) cachedMaterialIndices.Dispose();
         cachedUniqueMaterials = null;
     }

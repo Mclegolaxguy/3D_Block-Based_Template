@@ -23,6 +23,14 @@ public class BlockTypeDrawer : PropertyDrawer
         SerializedProperty leftTextureProp = property.FindPropertyRelative("leftTexture");
         SerializedProperty rightTextureProp = property.FindPropertyRelative("rightTexture");
 
+        SerializedProperty singleColorProp = property.FindPropertyRelative("singleColor");
+        SerializedProperty topColorProp = property.FindPropertyRelative("topColor");
+        SerializedProperty bottomColorProp = property.FindPropertyRelative("bottomColor");
+        SerializedProperty frontColorProp = property.FindPropertyRelative("frontColor");
+        SerializedProperty backColorProp = property.FindPropertyRelative("backColor");
+        SerializedProperty leftColorProp = property.FindPropertyRelative("leftColor");
+        SerializedProperty rightColorProp = property.FindPropertyRelative("rightColor");
+
         float spacing = EditorGUIUtility.standardVerticalSpacing;
         Rect rect = new Rect(position.x, position.y, position.width, EditorGUIUtility.singleLineHeight);
 
@@ -44,15 +52,22 @@ public class BlockTypeDrawer : PropertyDrawer
             if (separate)
             {
                 DrawProperty(ref rect, topTextureProp, spacing);
+                DrawProperty(ref rect, topColorProp, spacing);
                 DrawProperty(ref rect, bottomTextureProp, spacing);
+                DrawProperty(ref rect, bottomColorProp, spacing);
                 DrawProperty(ref rect, frontTextureProp, spacing);
+                DrawProperty(ref rect, frontColorProp, spacing);
                 DrawProperty(ref rect, backTextureProp, spacing);
+                DrawProperty(ref rect, backColorProp, spacing);
                 DrawProperty(ref rect, leftTextureProp, spacing);
+                DrawProperty(ref rect, leftColorProp, spacing);
                 DrawProperty(ref rect, rightTextureProp, spacing);
+                DrawProperty(ref rect, rightColorProp, spacing);
             }
             else
             {
                 DrawProperty(ref rect, singleTextureProp, spacing);
+                DrawProperty(ref rect, singleColorProp, spacing);
             }
 
             EditorGUI.indentLevel--;
@@ -91,15 +106,22 @@ public class BlockTypeDrawer : PropertyDrawer
         if (separate)
         {
             totalHeight += GetPropHeight(property.FindPropertyRelative("topTexture"), spacing);
+            totalHeight += GetPropHeight(property.FindPropertyRelative("topColor"), spacing);
             totalHeight += GetPropHeight(property.FindPropertyRelative("bottomTexture"), spacing);
+            totalHeight += GetPropHeight(property.FindPropertyRelative("bottomColor"), spacing);
             totalHeight += GetPropHeight(property.FindPropertyRelative("frontTexture"), spacing);
+            totalHeight += GetPropHeight(property.FindPropertyRelative("frontColor"), spacing);
             totalHeight += GetPropHeight(property.FindPropertyRelative("backTexture"), spacing);
+            totalHeight += GetPropHeight(property.FindPropertyRelative("backColor"), spacing);
             totalHeight += GetPropHeight(property.FindPropertyRelative("leftTexture"), spacing);
+            totalHeight += GetPropHeight(property.FindPropertyRelative("leftColor"), spacing);
             totalHeight += GetPropHeight(property.FindPropertyRelative("rightTexture"), spacing);
+            totalHeight += GetPropHeight(property.FindPropertyRelative("rightColor"), spacing);
         }
         else
         {
             totalHeight += GetPropHeight(property.FindPropertyRelative("singleTexture"), spacing);
+            totalHeight += GetPropHeight(property.FindPropertyRelative("singleColor"), spacing);
         }
 
         return totalHeight;

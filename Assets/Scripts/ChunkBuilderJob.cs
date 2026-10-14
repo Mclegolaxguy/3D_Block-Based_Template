@@ -11,12 +11,14 @@ public struct ChunkBuilderJob : IJob
     [ReadOnly] public bool generateVoxels;
     [ReadOnly] public GenerationBlockIDs blockIDs;
     [ReadOnly] public NativeArray<float4> blockFaceUVs;
+    [ReadOnly] public NativeArray<float4> blockFaceColors;
     [ReadOnly] public NativeArray<int> blockMaterialIndices;
 
     public NativeArray<byte> voxelMap;
     public NativeArray<float3> vertices;
     public NativeArray<int> triangles;
     public NativeArray<float2> uvs;
+    public NativeArray<float4> colors;
     public NativeArray<int> counter;
     public NativeArray<int> triangleSubmeshIndices;
 
@@ -138,13 +140,19 @@ public struct ChunkBuilderJob : IJob
         vertices[vIndex + 2] = GetCornerVertex(triData.z) + new float3(x, y, z);
         vertices[vIndex + 3] = GetCornerVertex(triData.w) + new float3(x, y, z);
 
-        int uvLookupIndex = (blockID * 6) + face;
-        float4 uvRect = blockFaceUVs[uvLookupIndex];
+        int lookupIndex = (blockID * 6) + face;
+        float4 uvRect = blockFaceUVs[lookupIndex];
+        float4 faceColor = blockFaceColors[lookupIndex];
 
         uvs[vIndex] = new float2(uvRect.x, uvRect.y);
         uvs[vIndex + 1] = new float2(uvRect.x, uvRect.w);
         uvs[vIndex + 2] = new float2(uvRect.z, uvRect.y);
         uvs[vIndex + 3] = new float2(uvRect.z, uvRect.w);
+
+        colors[vIndex] = faceColor;
+        colors[vIndex + 1] = faceColor;
+        colors[vIndex + 2] = faceColor;
+        colors[vIndex + 3] = faceColor;
 
         int triStartIndex = (vIndex * 3 / 2);
         triangles[triStartIndex + 0] = vIndex;
