@@ -1,5 +1,6 @@
 using UnityEngine;
 
+[RequireComponent(typeof(CharacterController))]
 public class FirstPersonController : MonoBehaviour
 {
     [Header("Movement Settings")]
@@ -20,6 +21,12 @@ public class FirstPersonController : MonoBehaviour
     void Start()
     {
         controller = GetComponent<CharacterController>();
+
+        // Ensure player has the correct tag for WorldManager auto-detection
+        if (!CompareTag("Player"))
+        {
+            tag = "Player";
+        }
 
         // Lock and hide the cursor for first-person view
         Cursor.lockState = CursorLockMode.Locked;

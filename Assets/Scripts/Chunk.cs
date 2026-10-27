@@ -128,6 +128,8 @@ public class Chunk : MonoBehaviour
 
     private void BuildMesh()
     {
+        if (mesh == null) return;
+
         int vertexCount = counter[0];
         int totalFaces = vertexCount / 4;
 
@@ -167,7 +169,7 @@ public class Chunk : MonoBehaviour
 
             mesh.RecalculateNormals();
             mesh.RecalculateBounds();
-            meshCollider.sharedMesh = mesh;
+            if (meshCollider != null) meshCollider.sharedMesh = mesh;
         }
     }
 

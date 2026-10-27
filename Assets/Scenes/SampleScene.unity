@@ -4606,8 +4606,10 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::WorldManager
   chunkPrefab: {fileID: 5262027349522573422, guid: afb9899891b1b624fbbfd2873c5a8297, type: 3}
-  worldSizeInChunks: 8
+  playerTransform: {fileID: 0}
+  renderDistance: 6
   seed: 0
+  chunksProcessedPerFrame: 2
   blockTypes:
   - blockName: Air
     isTransparent: 1
@@ -10239,8 +10241,10 @@ Material:
   m_EnableInstancingVariants: 0
   m_DoubleSidedGI: 0
   m_CustomRenderQueue: -1
-  stringTagMap: {}
-  disabledShaderPasses: []
+  stringTagMap:
+    RenderType: Opaque
+  disabledShaderPasses:
+  - MOTIONVECTORS
   m_LockedProperties: 
   m_SavedProperties:
     serializedVersion: 3

@@ -44,9 +44,14 @@ public class WorldManager : MonoBehaviour
         public Color rightColor = Color.white;
     }
 
+    [Header("References")]
     public GameObject chunkPrefab;
-    public int worldSizeInChunks = 1;
+    public Transform playerTransform;
+
+    [Header("World Settings")]
+    public int renderDistance = 6; // Radius in chunks around the player
     public int seed = 0;
+    public int chunksProcessedPerFrame = 2; // Stability throttle to prevent lag spikes
 
     [Header("Block Definitions")]
     public List<BlockType> blockTypes = new List<BlockType>();
@@ -55,8 +60,13 @@ public class WorldManager : MonoBehaviour
     private NativeArray<float4> cachedColorMap;
     private NativeArray<int> cachedMaterialIndices;
     private List<Material> cachedUniqueMaterials;
-    private Dictionary<Vector2Int, Chunk> chunks = new Dictionary<Vector2Int, Chunk>();
+
+    private Dictionary<Vector2Int, Chunk> activeChunks = new Dictionary<Vector2Int, Chunk>();
+    private Queue<Vector2Int> chunkLoadQueue = new Queue<Vector2Int>();
     private Dictionary<string, byte> blockNameToID = new Dictionary<string, byte>(System.StringComparer.OrdinalIgnoreCase);
+
+    private Vector2Int lastPlayerChunkCoord = new Vector2Int(int.MinValue, int.MinValue);
+    private bool isWorldGenerated = false;
 
     private void Awake()
     {
@@ -65,7 +75,29 @@ public class WorldManager : MonoBehaviour
 
     private void Start()
     {
+        if (playerTransform == null)
+        {
+            GameObject playerObj = GameObject.FindGameObjectWithTag("Player");
+            if (playerObj != null) playerTransform = playerObj.transform;
+            else Debug.LogWarning("WorldManager: No Player transform assigned or found with 'Player' tag!");
+        }
+
         GenerateWorld();
+    }
+
+    private void Update()
+    {
+        if (!isWorldGenerated || playerTransform == null) return;
+
+        Vector2Int currentPlayerChunkCoord = GetChunkCoordFromPosition(playerTransform.position);
+
+        if (currentPlayerChunkCoord != lastPlayerChunkCoord)
+        {
+            lastPlayerChunkCoord = currentPlayerChunkCoord;
+            UpdateVisibleChunks(currentPlayerChunkCoord);
+        }
+
+        ProcessChunkQueue();
     }
 
     public void BuildBlockDictionary()
@@ -85,56 +117,137 @@ public class WorldManager : MonoBehaviour
         BuildBlockDictionary();
         ClearWorld();
 
-        for (int x = 0; x < worldSizeInChunks; x++)
+        if (playerTransform != null)
         {
-            for (int z = 0; z < worldSizeInChunks; z++)
-            {
-                Vector2Int pos = new Vector2Int(x, z);
-                Vector3Int chunkPos = new Vector3Int(x * 16, 0, z * 16);
-
-                GameObject chunkObj = Instantiate(chunkPrefab, chunkPos, Quaternion.identity, transform);
-                Chunk chunk = chunkObj.GetComponent<Chunk>();
-
-                chunk.Initialize(this, chunkPos);
-
-                if (!Application.isPlaying)
-                {
-                    chunk.CompleteJobImmediately();
-                }
-
-                chunks[pos] = chunk;
-            }
+            lastPlayerChunkCoord = GetChunkCoordFromPosition(playerTransform.position);
         }
+        else
+        {
+            lastPlayerChunkCoord = Vector2Int.zero;
+        }
+
+        UpdateVisibleChunks(lastPlayerChunkCoord);
+        isWorldGenerated = true;
     }
 
     public void ClearWorld()
     {
-        chunks.Clear();
+        isWorldGenerated = false;
+        chunkLoadQueue.Clear();
+
+        foreach (var kvp in activeChunks)
+        {
+            if (kvp.Value != null)
+            {
+                kvp.Value.Cleanup();
+                if (Application.isPlaying) Destroy(kvp.Value.gameObject);
+                else DestroyImmediate(kvp.Value.gameObject);
+            }
+        }
+        activeChunks.Clear();
         DisposeNativeData();
+    }
 
-        List<GameObject> children = new List<GameObject>();
-        foreach (Transform child in transform)
+    private Vector2Int GetChunkCoordFromPosition(Vector3 worldPos)
+    {
+        int x = Mathf.FloorToInt(worldPos.x / 16f);
+        int z = Mathf.FloorToInt(worldPos.z / 16f);
+        return new Vector2Int(x, z);
+    }
+
+    private void UpdateCenterChunk(Vector2Int centerCoord)
+    {
+        UpdateVisibleChunks(centerCoord);
+    }
+
+    private void UpdateVisibleChunks(Vector2Int centerCoord)
+    {
+        HashSet<Vector2Int> requiredChunks = new HashSet<Vector2Int>();
+
+        for (int x = -renderDistance; x <= renderDistance; x++)
         {
-            children.Add(child.gameObject);
+            for (int z = -renderDistance; z <= renderDistance; z++)
+            {
+                if (x * x + z * z <= renderDistance * renderDistance) // Circular render distance
+                {
+                    Vector2Int chunkCoord = new Vector2Int(centerCoord.x + x, centerCoord.y + z);
+                    requiredChunks.Add(chunkCoord);
+                }
+            }
         }
 
-        foreach (GameObject child in children)
+        // Unload chunks out of range
+        List<Vector2Int> chunksToRemoval = new List<Vector2Int>();
+        foreach (var kvp in activeChunks)
         {
-            Chunk c = child.GetComponent<Chunk>();
-            if (c != null) c.Cleanup();
-
-            if (Application.isPlaying) Destroy(child);
-            else DestroyImmediate(child);
+            if (!requiredChunks.Contains(kvp.Key))
+            {
+                chunksToRemoval.Add(kvp.Key);
+            }
         }
+
+        foreach (var coord in chunksToRemoval)
+        {
+            if (activeChunks.TryGetValue(coord, out Chunk chunk))
+            {
+                if (chunk != null)
+                {
+                    chunk.Cleanup();
+                    if (Application.isPlaying) Destroy(chunk.gameObject);
+                    else DestroyImmediate(chunk.gameObject);
+                }
+                activeChunks.Remove(coord);
+            }
+        }
+
+        // Queue new chunks to load
+        foreach (var coord in requiredChunks)
+        {
+            if (!activeChunks.ContainsKey(coord) && !chunkLoadQueue.Contains(coord))
+            {
+                chunkLoadQueue.Enqueue(coord);
+            }
+        }
+    }
+
+    private void ProcessChunkQueue()
+    {
+        int processed = 0;
+        while (chunkLoadQueue.Count > 0 && processed < chunksProcessedPerFrame)
+        {
+            Vector2Int coord = chunkLoadQueue.Dequeue();
+
+            // Re-verify if it's still needed (player might have moved away)
+            if (Vector2Int.Distance(coord, lastPlayerChunkCoord) <= renderDistance)
+            {
+                SpawnChunk(coord);
+                processed++;
+            }
+        }
+    }
+
+    private void SpawnChunk(Vector2Int coord)
+    {
+        if (activeChunks.ContainsKey(coord)) return;
+
+        Vector3Int chunkWorldPos = new Vector3Int(coord.x * 16, 0, coord.y * 16);
+        GameObject chunkObj = Instantiate(chunkPrefab, chunkWorldPos, Quaternion.identity, transform);
+        Chunk chunk = chunkObj.GetComponent<Chunk>();
+
+        chunk.Initialize(this, chunkWorldPos);
+
+        if (!Application.isPlaying)
+        {
+            chunk.CompleteJobImmediately();
+        }
+
+        activeChunks[coord] = chunk;
     }
 
     public Chunk GetChunkFromVector3(Vector3 worldPosition)
     {
-        int chunkX = Mathf.FloorToInt(worldPosition.x / 16f);
-        int chunkZ = Mathf.FloorToInt(worldPosition.z / 16f);
-        Vector2Int chunkKey = new Vector2Int(chunkX, chunkZ);
-
-        chunks.TryGetValue(chunkKey, out Chunk chunk);
+        Vector2Int chunkKey = GetChunkCoordFromPosition(worldPosition);
+        activeChunks.TryGetValue(chunkKey, out Chunk chunk);
         return chunk;
     }
 
